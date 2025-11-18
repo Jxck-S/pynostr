@@ -55,14 +55,14 @@ class Relay(BaseRelay):
                     websocket_connect(
                         self.url,
                         ping_interval=60,
-                        ping_timeout=120,
+                        ping_timeout=60,
                     ),
                 )
             else:
                 self.ws = yield websocket_connect(
                     self.url,
                     ping_interval=60,
-                    ping_timeout=120,
+                    ping_timeout=60,
                 )
             self.connected = True
             # self.io_loop.call_later(1, self.send_message, self.request)
