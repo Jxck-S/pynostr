@@ -134,7 +134,16 @@ class RelayManager:
                     log.info(
                         f"Connection to WebSocket client {relays[i].url} timed out"
                     )
-                    # relays[i].on_error()
+                    # Close the relay rather than abandoning it. This used to be
+                    # commented out, so a relay that timed out here was never
+                    # cleaned up and its socket stayed open for the life of the
+                    # process. Relay.close() is a no-op when nothing was opened.
+                    try:
+                        yield relays[i].close()
+                    except Exception as err:  # noqa: BLE001 - cleanup must not raise
+                        log.debug(
+                            f"Error closing timed-out relay {relays[i].url}: {err}"
+                        )
 
         elif len(futures) > 0:
             yield gen.multi(futures)
