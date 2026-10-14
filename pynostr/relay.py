@@ -92,6 +92,11 @@ class Relay(BaseRelay):
         self.ws = None
         self.io_loop = io_loop
         self.running = True
+        # Bumped by close(). A retry scheduled before a close() carries the old
+        # value and is dropped, even if start() has re-armed the relay since --
+        # otherwise it would open a second, untracked connection alongside the
+        # new one.
+        self._generation = 0
 
     @property
     def is_connected(self) -> bool:
@@ -147,17 +152,22 @@ class Relay(BaseRelay):
         if error:
             self.error_counter += 1
             if self.running and self.error_counter <= self.error_threshold:
-                self.io_loop.call_later(1, self.connect)
+                self.io_loop.call_later(1, self._retry, self._generation)
             else:
                 return
         elif timeout_error:
             self.timeout_error_counter += 1
             if self.running and self.timeout_error_counter <= self.timeout_error_threshold:
-                self.io_loop.call_later(1, self.connect)
+                self.io_loop.call_later(1, self._retry, self._generation)
             else:
                 return
 
         log.info(f"WebSocket connection to {self.url} closed")
+
+    def _retry(self, generation):
+        if generation != self._generation:
+            return None
+        return self.connect()
 
     @gen.coroutine
     def _eose_received(self):
@@ -184,6 +194,7 @@ class Relay(BaseRelay):
         # the relay retry *more*.
         self.running = False
         self.connected = False
+        self._generation += 1
         if self.ws is not None:
             self.error_counter = 0
             self.timeout_error_counter = 0
