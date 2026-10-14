@@ -118,13 +118,17 @@ class RelayManager:
                 # yield relay.connect()
                 timeout = relay.timeout
                 relays.append(relay)
+                # start(), not connect(): a relay closed by an earlier
+                # run_sync() (timeout or EOSE) has running=False, and connect()
+                # alone would return without opening anything -- so an event
+                # queued between two run_sync() calls was never sent.
                 if timeout > 0:
                     future = gen.with_timeout(
-                        self.io_loop.time() + timeout, relay.connect()
+                        self.io_loop.time() + timeout, relay.start()
                     )
                     futures_timeout.append(future)
                 else:
-                    futures.append(relay.connect())
+                    futures.append(relay.start())
 
         if len(futures_timeout) > 0:
             for i, future in enumerate(futures_timeout):
