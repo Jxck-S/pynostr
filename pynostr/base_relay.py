@@ -54,12 +54,18 @@ class BaseRelay:
         close_on_eose: bool = True,
         message_callback=None,
         message_callback_url=False,
+        close_on_ok: bool = True,
     ) -> None:
         self.url = url
         self.policy = policy
         self.message_pool = message_pool
         self.timeout = timeout
         self.close_on_eose = close_on_eose
+        # Close once every event sent on this connection has been answered
+        # with OK and there is no subscription to wait on, rather than holding
+        # the socket open until the timeout.
+        self.close_on_ok = close_on_ok
+        self.awaiting_ok: set[str] = set()
         self.lock: Lock = Lock()
         self.metadata = None
         self.subscriptions: dict[str, Subscription] = {}
@@ -153,6 +159,7 @@ class BaseRelay:
                 self._eose_received()
                 self.message_pool.add_message(message, self.url)
             elif message_type == RelayMessageType.OK:
+                self.awaiting_ok.discard(message_json[1])
                 self.message_pool.add_message(message, self.url)
             elif message_type == RelayMessageType.AUTH:
                 # TODO Follow this workflow to see if this is fully implemented
@@ -164,6 +171,23 @@ class BaseRelay:
 
     def publish(self, message: str):
         self.outgoing_messages.put(message)
+
+    def _track_sent(self, message: str):
+        """Remember an EVENT we sent, so its OK can be matched."""
+        if message.startswith('["EVENT"'):
+            try:
+                self.awaiting_ok.add(json.loads(message)[1]["id"])
+            except (ValueError, LookupError, TypeError):
+                pass
+
+    def _publish_finished(self, sent_event: bool) -> bool:
+        return (
+            self.close_on_ok
+            and sent_event
+            and not self.awaiting_ok
+            and not self.subscriptions
+            and self.outgoing_messages.qsize() == 0
+        )
 
     def _eose_received(self):
         self.eose_counter += 1

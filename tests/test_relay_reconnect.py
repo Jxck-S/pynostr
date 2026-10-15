@@ -9,6 +9,7 @@ one that sends a queued event -- has to open the connection again.
 import asyncio
 import json
 import threading
+import time
 import unittest
 
 from tornado.httpserver import HTTPServer
@@ -35,6 +36,13 @@ class _RelayHandler(WebSocketHandler):
             self.write_message(json.dumps(["EOSE", msg[1]]))
 
 
+class _SilentHandler(WebSocketHandler):
+    """Accepts events but never answers them."""
+
+    def on_message(self, message):
+        self.application.settings["received"].append(json.loads(message))
+
+
 class _LocalRelay:
     def __init__(self):
         self.received = []
@@ -49,7 +57,10 @@ class _LocalRelay:
         sockets = bind_sockets(0, "127.0.0.1")
         self.port = sockets[0].getsockname()[1]
         self.server = HTTPServer(
-            Application([(r"/", _RelayHandler)], received=self.received)
+            Application(
+                [(r"/", _RelayHandler), (r"/silent", _SilentHandler)],
+                received=self.received,
+            )
         )
         self.server.add_sockets(sockets)
         self._started.set()
@@ -122,6 +133,65 @@ class TestRelayReconnect(unittest.TestCase):
             sorted(m[1]["id"] for m in self.relay.events()),
             sorted(e.id for e in events),
         )
+
+
+class TestCloseAfterOk(unittest.TestCase):
+    """run_sync() returns once every published event is acknowledged."""
+
+    def setUp(self):
+        self.relay = _LocalRelay()
+
+    def tearDown(self):
+        self.relay.stop()
+
+    def test_publish_returns_when_ok_received(self):
+        rm = RelayManager(timeout=5)
+        rm.add_relay(self.relay.url)
+        event = _signed_event()
+        rm.publish_event(event)
+        start = time.monotonic()
+        rm.run_sync()
+        elapsed = time.monotonic() - start
+        rm.close_all_relay_connections()
+
+        self.assertEqual([m[1]["id"] for m in self.relay.events()], [event.id])
+        self.assertLess(elapsed, 2)
+
+    def test_waits_for_every_queued_event(self):
+        rm = RelayManager(timeout=5)
+        rm.add_relay(self.relay.url)
+        events = [_signed_event() for _ in range(3)]
+        for event in events:
+            rm.publish_event(event)
+        rm.run_sync()
+        rm.close_all_relay_connections()
+
+        oks = {ok.event_id for ok in rm.message_pool.get_all_ok()}
+        self.assertEqual(oks, {e.id for e in events})
+
+    def test_silent_relay_still_times_out(self):
+        rm = RelayManager(timeout=1)
+        rm.add_relay(self.relay.url + "silent")
+        event = _signed_event()
+        rm.publish_event(event)
+        start = time.monotonic()
+        rm.run_sync()
+        elapsed = time.monotonic() - start
+        rm.close_all_relay_connections()
+
+        self.assertEqual([m[1]["id"] for m in self.relay.events()], [event.id])
+        self.assertGreaterEqual(elapsed, 0.9)
+
+    def test_close_on_ok_false_keeps_old_behaviour(self):
+        rm = RelayManager(timeout=1)
+        rm.add_relay(self.relay.url, close_on_ok=False)
+        rm.publish_event(_signed_event())
+        start = time.monotonic()
+        rm.run_sync()
+        elapsed = time.monotonic() - start
+        rm.close_all_relay_connections()
+
+        self.assertGreaterEqual(elapsed, 0.9)
 
 
 class TestStaleRetry(unittest.TestCase):
