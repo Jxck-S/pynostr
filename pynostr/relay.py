@@ -77,6 +77,7 @@ class Relay(BaseRelay):
         close_on_eose: bool = True,
         message_callback=None,
         message_callback_url=False,
+        close_on_ok: bool = True,
     ) -> None:
         if policy is None:
             policy = RelayPolicy()
@@ -88,6 +89,7 @@ class Relay(BaseRelay):
             close_on_eose,
             message_callback,
             message_callback_url,
+            close_on_ok,
         )
         self.ws = None
         self.io_loop = io_loop
@@ -128,16 +130,27 @@ class Relay(BaseRelay):
             )
             self.connected = True
             # self.io_loop.call_later(1, self.send_message, self.request)
+            self.awaiting_ok.clear()
+            sent_event = False
             while True:
                 if self.outgoing_messages.qsize() > 0:
                     message = self.outgoing_messages.get()
                     self.num_sent_events += 1
+                    self._track_sent(message)
+                    sent_event = sent_event or message.startswith('["EVENT"')
                     self.ws.write_message(message)
                 message = yield self.ws.read_message()
                 if message is None:
                     break
                 self._on_message(message)
                 if not self.connected:
+                    break
+                if self._publish_finished(sent_event):
+                    # Everything we sent is acknowledged and nothing is
+                    # subscribed: done. Without this the socket idles until
+                    # run_sync()'s timeout, which made every publish cost the
+                    # full timeout.
+                    yield self.close()
                     break
 
         except (gen.TimeoutError, HTTPTimeoutError):

@@ -44,6 +44,7 @@ class RelayManager:
         message_callback=None,
         message_callback_url=False,
         get_metadata=False,
+        close_on_ok: bool = True,
     ):
         if policy is None:
             policy = RelayPolicy()
@@ -54,6 +55,7 @@ class RelayManager:
             policy,
             timeout=timeout,
             close_on_eose=close_on_eose,
+            close_on_ok=close_on_ok,
             message_callback=message_callback,
             message_callback_url=message_callback_url,
         )
@@ -81,6 +83,7 @@ class RelayManager:
         message_callback=None,
         message_callback_url=False,
         get_metadata=False,
+        close_on_ok: bool = True,
     ):
         for relay in relay_list:
             self.add_relay(
@@ -88,6 +91,7 @@ class RelayManager:
                 relay.policy,
                 timeout=timeout,
                 close_on_eose=close_on_eose,
+                close_on_ok=close_on_ok,
                 message_callback=message_callback,
                 message_callback_url=message_callback_url,
                 get_metadata=get_metadata,
